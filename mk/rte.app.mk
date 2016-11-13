@@ -163,7 +163,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_VHOST)          += -lfuse
 endif
 _LDLIBS-$(CONFIG_RTE_PORT_PCAP)             += -lpcap
 endif # !CONFIG_RTE_BUILD_SHARED_LIBS
-
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_VLINK)      += -lrte_pmd_vlink
 _LDLIBS-y += $(EXECENV_LDLIBS)
 _LDLIBS-y += -lvlinkinfra
 LDLIBS += $(_LDLIBS-y) $(CPU_LDLIBS) $(EXTRA_LDLIBS)
