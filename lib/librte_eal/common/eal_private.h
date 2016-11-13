@@ -80,7 +80,7 @@ int rte_eal_cpu_init(void);
  * @return
  *   0 on success, negative on error
  */
-int rte_eal_memory_init(void);
+int rte_eal_memory_init(int);
 
 /**
  * Configure timers
@@ -324,5 +324,8 @@ int rte_eal_hugepage_init(void);
  * This function is private to the EAL.
  */
 int rte_eal_hugepage_attach(void);
+int _rte_map_continuous_memory_area(uint64_t target_addr,const uint64_t phy_addr, int nr_pages);
+int rte_eal_hugepage_init_from_metadata(void);
+
 
 #endif /* _EAL_PRIVATE_H_ */

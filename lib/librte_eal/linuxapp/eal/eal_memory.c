@@ -100,6 +100,8 @@
 #include "eal_hugepages.h"
 
 #define PFN_MASK_SIZE	8
+#define HUGEPAGE_METADATA_PATH "/tmp/dpdk-memory-metadata"
+#define HUGEPAGE_SEGMENT_METADATA_PATH "/tmp/dpdk-segment-metadata"
 
 #ifdef RTE_LIBRTE_XEN_DOM0
 int rte_xen_dom0_supported(void)
@@ -120,6 +122,7 @@ int rte_xen_dom0_supported(void)
  * zone as well as a physical contiguous zone.
  */
 
+static int init_flag=0;
 static uint64_t baseaddr_offset;
 
 static unsigned proc_pagemap_readable;
@@ -166,6 +169,7 @@ rte_mem_virt2phy(const void *virtaddr)
 	int page_size;
 	off_t offset;
 
+	//return translate_virt_address((uint64_t)virtaddr);
 	/* when using dom0, /proc/self/pagemap always returns 0, check in
 	 * dpdk memory by browsing the memsegs */
 	if (rte_xen_dom0_supported()) {
@@ -190,7 +194,7 @@ rte_mem_virt2phy(const void *virtaddr)
 	}
 
 	/* Cannot parse /proc/self/pagemap, no need to log errors everywhere */
-	if (!proc_pagemap_readable)
+	if (!init_flag&&!proc_pagemap_readable)
 		return RTE_BAD_PHYS_ADDR;
 
 	/* standard page size */
@@ -1153,6 +1157,105 @@ huge_recover_sigbus(void)
 	}
 }
 
+
+int _rte_map_continuous_memory_area(uint64_t target_addr,const uint64_t phy_addr, int nr_pages)
+{
+	char  path[64];
+	uint64_t phy_addr_buff;
+	int ready_to_map=0;
+	uint64_t addr_offset=0;
+	FILE*fp=fopen(HUGEPAGE_METADATA_PATH,"r");
+	if(!fp)
+		return -1;
+	while(!feof(fp)&&(nr_pages>0)){
+		memset(path,0x0,sizeof(path));
+		fscanf(fp,"%s%"PRIx64"\n",path,&phy_addr_buff);
+		if(phy_addr_buff==phy_addr)
+			ready_to_map=1;
+		if(ready_to_map){
+			int fd=open(path,O_RDWR,0);
+			if(fd<0){
+				close(fd);
+				goto fails;
+				}
+			void* rc=mmap((void*)(target_addr+addr_offset),HUGEPAGE_2M,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
+			if(rc==MAP_FAILED){
+				close(fd);
+				goto fails;
+			}
+			memset(rc,0x0,HUGEPAGE_2M);/*this it critical ,because without this,the program may crash due to same memory layout and memory garbage*/
+			close(fd);
+			addr_offset+=HUGEPAGE_2M;
+			nr_pages--;
+		}
+	}
+
+	fclose(fp);
+	return 0;
+	fails:
+		fclose(fp);
+		return -1;
+}
+
+
+int rte_eal_hugepage_init_from_metadata(void)
+{
+	uint64_t phy_address;
+	uint64_t virt_address;
+	uint64_t seg_length;
+	uint64_t hugepage_sz;
+	uint32_t socket_id;
+	uint32_t nchannel;
+	uint32_t nrank;
+	uint64_t target_addr;
+	size_t sz;
+	struct rte_mem_config *mcfg;
+	int seg_iptr=0;
+	int rc;
+	printf("[x]initialize hugepage from metadata file\n");
+	init_flag=1;
+	mcfg=rte_eal_get_configuration()->mem_config;
+	FILE* fp=fopen(HUGEPAGE_SEGMENT_METADATA_PATH,"r");
+	if(!fp)
+		return -1;
+	while(!feof(fp)){
+		fscanf(fp,"%"PRIx64"%"PRIx64"%"PRIu64"%"PRIu64"%d%d%d\n",&phy_address,
+			&virt_address,
+			&seg_length,
+			&hugepage_sz,
+			&socket_id,
+			&nchannel,
+			&nrank);
+		if(!phy_address||!virt_address)
+			continue;
+		mcfg->memseg[seg_iptr].phys_addr=phy_address;
+		mcfg->memseg[seg_iptr].addr_64=virt_address;
+		mcfg->memseg[seg_iptr].len=seg_length;
+		mcfg->memseg[seg_iptr].hugepage_sz=hugepage_sz;
+		mcfg->memseg[seg_iptr].socket_id=socket_id;
+		mcfg->memseg[seg_iptr].nchannel=nchannel;
+		mcfg->memseg[seg_iptr].nrank=nrank;
+		sz=seg_length;
+		target_addr=(uint64_t)get_virtual_area(&sz,hugepage_sz);
+		if(sz!=seg_length){
+			printf("[x]No enough memory space\n");
+			fclose(fp);
+			return -1;
+		}
+		rc=_rte_map_continuous_memory_area(target_addr,phy_address,seg_length/hugepage_sz);
+		if(!rc)
+			mcfg->memseg[seg_iptr].addr_64=target_addr;
+		else{
+			printf("[x]something is wrong with hugepage mapping:%s\n",strerror(errno));
+			fclose(fp);
+			return -1;
+		}
+		seg_iptr++;
+	}
+		
+	fclose(fp);
+	return 0;
+}
 /*
  * Prepare physical memory mapping: fill configuration structure with
  * these infos, return 0 on success.
@@ -1173,9 +1276,13 @@ rte_eal_hugepage_init(void)
 
 	uint64_t memory[RTE_MAX_NUMA_NODES];
 
+	int idx=0;
 	unsigned hp_offset;
 	int i, j, new_memseg;
 	int nr_hugefiles, nr_hugepages = 0;
+	FILE * fp=fopen(HUGEPAGE_METADATA_PATH,"w+");
+	FILE * fp_seg=fopen(HUGEPAGE_SEGMENT_METADATA_PATH,"w+");
+	printf("[x]initialize hugepage from DPDK eal\n");
 	void *addr;
 #ifdef RTE_EAL_SINGLE_FILE_SEGMENTS
 	int new_pages_count[MAX_HUGEPAGE_SIZES];
@@ -1321,6 +1428,11 @@ rte_eal_hugepage_init(void)
 		if (unmap_all_hugepages_orig(&tmp_hp[hp_offset], hpi) < 0)
 			goto fail;
 
+		/*record hugepage metadata*/
+		for(idx=0;idx<nr_hugepages;idx++){
+			fprintf(fp,"%s 0x%"PRIx64"\n",tmp_hp[idx].filepath,rte_mem_virt2phy(tmp_hp[idx].final_va));
+		}
+		printf("[x] number of hugepages:%d\n",nr_hugepages);
 		/* we have processed a num of hugepages of this size, so inc offset */
 		hp_offset += hpi->num_pages[0];
 #endif
@@ -1513,12 +1625,29 @@ rte_eal_hugepage_init(void)
 			RTE_MAX_MEMSEG);
 		goto fail;
 	}
-
+	{
+		int idx;
+		for(idx=0;idx<RTE_MAX_MEMSEG;idx++){
+			if(!mcfg->memseg[idx].addr)
+				break;
+			fprintf(fp_seg,"%"PRIx64" %"PRIx64" %d %d %d %d %d\n",mcfg->memseg[idx].phys_addr,
+				mcfg->memseg[idx].addr_64,
+				mcfg->memseg[idx].len,
+				mcfg->memseg[idx].hugepage_sz,
+				mcfg->memseg[idx].socket_id,
+				mcfg->memseg[idx].nchannel,
+				mcfg->memseg[idx].nrank
+				);
+		}
+	}
 	munmap(hugepage, nr_hugefiles * sizeof(struct hugepage_file));
-
+	fclose(fp);
+	fclose(fp_seg);
+	
 	return 0;
 
 fail:
+	fclose(fp);
 	huge_recover_sigbus();
 	free(tmp_hp);
 	if (hugepage != NULL)

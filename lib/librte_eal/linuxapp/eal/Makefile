@@ -50,13 +50,14 @@ CFLAGS += -I$(RTE_SDK)/lib/librte_ring
 CFLAGS += -I$(RTE_SDK)/lib/librte_mempool
 CFLAGS += -I$(RTE_SDK)/lib/librte_ivshmem
 endif
+CFLAGS += -I/$(VLINK_SDK)/vlinkinfra/include
 CFLAGS += $(WERROR_FLAGS) -O3
 
 LDLIBS += -ldl
 LDLIBS += -lpthread
 LDLIBS += -lgcc_s
 LDLIBS += -lrt
-
+LDLIBS += -lvlinkinfra
 # specific to linuxapp exec-env
 SRCS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) := eal.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) += eal_hugepage_info.c

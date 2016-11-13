@@ -171,7 +171,7 @@ rte_eal_config_create(void)
 	int retval;
 
 	const char *pathname = eal_runtime_config_path();
-
+	/*const char* pathname="./.rte_dummy_config";*/
 	if (internal_config.no_shconf)
 		return;
 
@@ -739,10 +739,20 @@ rte_eal_init(int argc, char **argv)
 	const char *logid;
 	char cpuset[RTE_CPU_AFFINITY_STR_LEN];
 	char thread_name[RTE_MAX_THREAD_NAME_LEN];
-
+	int init_flag=0;
+		{/*read from file*/
+		FILE* fp_flag;
+		int flag_number;
+		fp_flag=fopen("/tmp/dpdk-eal-flag","r");
+		if(fp_flag){
+			fscanf(fp_flag,"%d\n",&flag_number);
+			init_flag=!!flag_number;
+			fclose(fp_flag);
+			}
+		}
 	if (!rte_atomic32_test_and_set(&run_once))
 		return -1;
-
+	
 	logid = strrchr(argv[0], '/');
 	logid = strdup(logid ? logid + 1: argv[0]);
 
@@ -766,7 +776,7 @@ rte_eal_init(int argc, char **argv)
 	if (internal_config.no_hugetlbfs == 0 &&
 			internal_config.process_type != RTE_PROC_SECONDARY &&
 			internal_config.xen_dom0_support == 0 &&
-			eal_hugepage_info_init() < 0)
+			(init_flag&&eal_hugepage_info_init() < 0))
 		rte_panic("Cannot get hugepage information\n");
 
 	if (internal_config.memory == 0 && internal_config.force_sockets == 0) {
@@ -802,7 +812,7 @@ rte_eal_init(int argc, char **argv)
 		rte_panic("Cannot init IVSHMEM\n");
 #endif
 
-	if (rte_eal_memory_init() < 0)
+	if (rte_eal_memory_init(init_flag) < 0)
 		rte_panic("Cannot init memory\n");
 
 	/* the directories are locked during eal_hugepage_info_init */
@@ -847,6 +857,8 @@ rte_eal_init(int argc, char **argv)
 	if (rte_eal_intr_init() < 0)
 		rte_panic("Cannot init interrupt-handling thread\n");
 
+	if(init_translation_tbl()<0)
+		rte_panic("Cannot init translation-table\n");
 	RTE_LCORE_FOREACH_SLAVE(i) {
 
 		/*

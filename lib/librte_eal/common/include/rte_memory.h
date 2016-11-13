@@ -54,6 +54,19 @@ extern "C" {
 
 #include <rte_common.h>
 
+
+int init_translation_tbl(void);
+void * rte_translation_virt2phy(void* ptr);
+void * rte_translation_phy2virt(void *ptr);
+
+
+
+
+#define HUGEPAGE_2M (1<<21)
+#define HUGEPAGE_2M_MASK ((1<<21)-1)
+//#define MEMORY_SEGMENT_TABLE_HASH_SIZE (1024*8)/*must be power of 2*/
+
+
 enum rte_page_sizes {
 	RTE_PGSIZE_4K    = 1ULL << 12,
 	RTE_PGSIZE_64K   = 1ULL << 16,

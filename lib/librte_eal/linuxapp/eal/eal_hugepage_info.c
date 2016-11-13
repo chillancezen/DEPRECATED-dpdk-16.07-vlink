@@ -68,7 +68,8 @@ get_num_hugepages(const char *subdir)
 {
 	char path[PATH_MAX];
 	long unsigned resv_pages, num_pages = 0;
-	const char *nr_hp_file = "free_hugepages";
+	/*const char *nr_hp_file = "free_hugepages";*/
+	const char *nr_hp_file="nr_hugepages";
 	const char *nr_rsvd_file = "resv_hugepages";
 
 	/* first, check how many reserved pages kernel reports */
@@ -85,7 +86,7 @@ get_num_hugepages(const char *subdir)
 	if (num_pages == 0)
 		RTE_LOG(WARNING, EAL, "No free hugepages reported in %s\n",
 				subdir);
-
+	#if 0
 	/* adjust num_pages */
 	if (num_pages >= resv_pages)
 		num_pages -= resv_pages;
@@ -96,7 +97,9 @@ get_num_hugepages(const char *subdir)
 	 * anyway ... */
 	if (num_pages > UINT32_MAX)
 		num_pages = UINT32_MAX;
-
+	#endif
+	/*printf("return :%d\n",num_pages);*/
+	num_pages=(num_pages>512)?512:num_pages;
 	return num_pages;
 }
 
